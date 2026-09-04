@@ -42,27 +42,102 @@ traffic.
 
 ## Architecture
 
+### Routing: ns-3 to a hop decision
+
 ```
-  ns-3 scenario (C++)
-        |
-        |  topology.csv: links, delays, block error rates
-        |  flows.csv:    per-UE traffic
-        v
-  +--------------------------------------------------+
-  |  Dijkstra           greedy            SAC agent   |
-  |  global graph       neighbours        neighbours  |
-  |  bisected mu*       lowest BLER       learned     |
-  +--------------------------------------------------+
-        |
-        v
-  routing_comparison.md
+      ns-3 scenario (C++)
+              |
+   28 GHz link budget: UMi pathloss, 23 dBm,
+   22 dB beam gain, 20% of links blocked
+              |
+              v
+   topology.csv (links, delay, BLER) + flows.csv
+              |
+      +-------+--------+--------------+
+      |                |              |
+      v                v              v
+   Dijkstra          greedy       SAC agent
+   whole graph      neighbours    neighbours
+   bisected mu*     lowest BLER   learned policy
+      |                |              |
+      +-------+--------+--------------+
+              |
+              v
+   per-UE delay, reliability, hops
+              |
+              v
+   docs/routing_comparison.md
 ```
 
-The C++ scenario builds the topology of Fig. 4 (a donor, 18 IAB nodes on 200 m rings, 36
-UEs) and derives each link's block error rate from a 28 GHz link budget: 3GPP UMi
-pathloss, 23 dBm transmit power, 22 dB of beamforming gain, and a 20 dB penalty on the
-20% of links that are blocked at any moment. The result is the behaviour mmWave actually
-shows, where a link is either clean or nearly unusable rather than uniformly noisy.
+### The SAC agent, one hop at a time
+
+```
+   node's neighbours
+          |
+   for each: link delay, BLER,
+   and the delay and reliability of
+   reaching the donor through it        <- Eq. (8)
+          |
+          v
+   actor (128, 512, 512, 128)           <- Table II
+          |
+   mask out padding slots and the
+   node we just came from
+          |
+          v
+   next hop
+          |
+   reward: psi_d*((tau-T)/T^o + (-1)^o)
+           - psi_r*(K-1)                <- Eq. (11)
+          |
+          v
+   twin critics (256, 1024, 1024, 256) + entropy term
+```
+
+### Training: warm start, then hand over
+
+```
+   donor solves Problem 1 centrally
+   (Dijkstra on c(i,mu), mu bisected to meet sigma)
+                   |
+                   v
+   routing table configured at every node       <- Section IV
+                   |
+      +------------+------------+
+      |                         |
+   early episodes            later episodes
+   follow the table          follow the policy
+      |                         |
+      +------------+------------+
+                   |
+        transitions into the replay buffer
+                   |
+                   v
+        SAC update: twin critics, entropy
+        target from real neighbour counts
+```
+
+### Scheduling: which links transmit this slot
+
+```
+   traffic matrix + interference matrix
+                   |
+                   v
+   buffers per link, packets on shortest paths
+                   |
+                   v
+   agent assigns a power to every link
+                   |
+   effective capacity = nominal x (power - interference)
+                   |
+                   v
+   packets move one hop; a packet arriving at
+   a full buffer is dropped
+                   |
+                   v
+   reward: -beta - alpha*(dropped/P) + (moved/P)
+```
+
 
 ## Running it
 
