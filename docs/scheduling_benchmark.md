@@ -4,8 +4,42 @@ Learned scheduling against the Residual Profit Maximizer on the same meshes and 
 
 | Mesh | Links | RPMA goodput | AARL goodput | RPMA decision | AARL decision |
 |------|-------|--------------|--------------|---------------|---------------|
-| small | 10 | 1.000 | 1.000 | 0.85 ms | 0.11 ms |
-| medium | 48 | 0.950 | 0.873 | 4.90 ms | 0.50 ms |
-| large | 96 | 0.777 | 0.318 | 13.77 ms | 7.98 ms |
+| small | 10 | 1.000 | 1.000 | 0.88 ms | 0.10 ms |
 
-RPMA's decision time grows 16x between the smallest and largest mesh; the learned policy's grows 70.1x. That is the whole argument: the search examines every link against every power level and every link already chosen, so it scales with the topology, while a forward pass through a fixed network does not care how many links it is scoring. Quality is the secondary question -- a better schedule computed after the slot has passed is not a schedule.
+RPMA's decision time grows 1x between the smallest and largest mesh; the learned policy's grows 1.0x. That is the whole argument: the search examines every link against every power level and every link already chosen, so it scales with the topology, while a forward pass through a fixed network does not care how many links it is scoring. Quality is the secondary question -- a better schedule computed after the slot has passed is not a schedule.
+
+
+## Goodput against interference level
+
+The level is what makes the decision matter. At 20% nearly everything can
+transmit together; at 100% only a subset can, and the wrong subset costs
+the slot.
+
+| Interference | RPMA | AARL |
+|---|---|---|
+| 20% | 0.977 | 0.885 |
+| 40% | 0.977 | 0.471 |
+| 60% | 0.950 | 0.721 |
+| 80% | 0.909 | 0.911 |
+| 100% | 0.903 | 0.814 |
+
+## Goodput by traffic pattern
+
+Incast is the hard case: 90% of nodes sending to 10% converges everything
+on a few buffers, which is where drops come from.
+
+| Workload | RPMA | AARL |
+|---|---|---|
+| uniform | 0.950 | 0.704 |
+| few-to-many | 1.000 | 1.000 |
+| many-to-few | 0.460 | 0.773 |
+
+## Drop sensitivity
+
+alpha weights dropped packets against packets moved: at 1 the agent is
+largely indifferent to drops, at 10 it avoids them.
+
+| Agent | alpha | Goodput |
+|---|---|---|
+| drop-insensitive | 1 | 0.555 |
+| drop-sensitive | 10 | 0.721 |

@@ -25,6 +25,68 @@ SLOT_BUDGET_MS = 10.0
 PACKETS = {"small": 2304, "medium": 10812, "large": 45246}
 
 
+def sweep_interference(size: str = "medium", steps: int = 20_000,
+                       levels=(0.2, 0.4, 0.6, 0.8, 1.0)) -> list[dict]:
+    """Goodput against interference level, the paper's Fig. 9.
+
+    The level is what makes scheduling hard: at 20% almost everything can transmit
+    together and the decision hardly matters, at 100% only a subset can and picking the
+    wrong one costs the whole slot.
+    """
+    rows = []
+    for level in levels:
+        cfg = SchedulingConfig(interference_level=level, initial_packets=PACKETS[size])
+        env = SchedulingEnv(build_mesh(size, cfg))
+        rpma_summary, _ = run_rpma(env, random.Random(0))
+
+        model, gym_env = train(size=size, alpha=10.0, interference_level=level,
+                               steps=steps)
+        aarl = evaluate(model, gym_env, episodes=3)
+        rows.append({"level": level, "rpma": rpma_summary["goodput"],
+                     "aarl": aarl["goodput"]})
+        print(f"  interference {level:.1f}: rpma={rows[-1]['rpma']:.3f} "
+              f"aarl={rows[-1]['aarl']:.3f}")
+    return rows
+
+
+def sweep_workloads(size: str = "medium", steps: int = 20_000) -> list[dict]:
+    """The three traffic patterns the paper evaluates.
+
+    uniform, few-to-many (10% of nodes sending to 90%) and many-to-few (the incast case,
+    90% sending to 10%). Incast is the hard one: everything converges on a few buffers.
+    """
+    rows = []
+    for workload in ("uniform", "few_to_many", "many_to_few"):
+        cfg = SchedulingConfig(interference_level=0.6, initial_packets=PACKETS[size])
+        env = SchedulingEnv(build_mesh(size, cfg), workload=workload)
+        rpma_summary, _ = run_rpma(env, random.Random(0))
+
+        model, gym_env = train(size=size, alpha=10.0, steps=steps)
+        gym_env.workload = workload
+        gym_env._build()
+        aarl = evaluate(model, gym_env, episodes=3)
+        rows.append({"workload": workload, "rpma": rpma_summary["goodput"],
+                     "aarl": aarl["goodput"]})
+        print(f"  {workload:12}: rpma={rows[-1]['rpma']:.3f} aarl={rows[-1]['aarl']:.3f}")
+    return rows
+
+
+def compare_alphas(size: str = "medium", steps: int = 20_000) -> list[dict]:
+    """Drop-sensitive against drop-insensitive, the paper's AARL-DS and AARL-DI.
+
+    alpha weights dropped packets against packets moved. At 1 the agent is largely
+    indifferent to drops; at 10 it avoids them, which is what the paper finds works
+    better on the larger meshes.
+    """
+    rows = []
+    for label, alpha in (("drop-insensitive", 1.0), ("drop-sensitive", 10.0)):
+        model, gym_env = train(size=size, alpha=alpha, steps=steps)
+        result = evaluate(model, gym_env, episodes=3)
+        rows.append({"agent": label, "alpha": alpha, "goodput": result["goodput"]})
+        print(f"  {label:17} (alpha={alpha:4.1f}): goodput={result['goodput']:.3f}")
+    return rows
+
+
 def main(sizes=("small", "medium", "large"), steps: int = 60_000,
          interference: float = 0.6) -> None:
     rows = []
@@ -86,6 +148,35 @@ def main(sizes=("small", "medium", "large"), steps: int = 60_000,
             "is not a schedule."
         )
         lines += ["", finding, ""]
+
+    print("\ninterference sweep:")
+    interference_rows = sweep_interference(steps=max(steps // 3, 5000))
+    lines += ["", "## Goodput against interference level", "",
+              "The level is what makes the decision matter. At 20% nearly everything can",
+              "transmit together; at 100% only a subset can, and the wrong subset costs",
+              "the slot.", "",
+              "| Interference | RPMA | AARL |", "|---|---|---|"]
+    for r in interference_rows:
+        lines.append(f"| {r['level']:.0%} | {r['rpma']:.3f} | {r['aarl']:.3f} |")
+
+    print("\nworkloads:")
+    workload_rows = sweep_workloads(steps=max(steps // 3, 5000))
+    lines += ["", "## Goodput by traffic pattern", "",
+              "Incast is the hard case: 90% of nodes sending to 10% converges everything",
+              "on a few buffers, which is where drops come from.", "",
+              "| Workload | RPMA | AARL |", "|---|---|---|"]
+    for r in workload_rows:
+        lines.append(f"| {r['workload'].replace('_', '-')} | {r['rpma']:.3f} "
+                     f"| {r['aarl']:.3f} |")
+
+    print("\ndrop sensitivity:")
+    alpha_rows = compare_alphas(steps=max(steps // 3, 5000))
+    lines += ["", "## Drop sensitivity", "",
+              "alpha weights dropped packets against packets moved: at 1 the agent is",
+              "largely indifferent to drops, at 10 it avoids them.", "",
+              "| Agent | alpha | Goodput |", "|---|---|---|"]
+    for r in alpha_rows:
+        lines.append(f"| {r['agent']} | {r['alpha']:.0f} | {r['goodput']:.3f} |")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(lines))
