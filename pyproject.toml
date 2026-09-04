@@ -10,7 +10,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4"]
-rl = ["torch>=2.2"]
+rl = [
+    "torch>=2.2",
+    "stable-baselines3>=2.3",
+    "gymnasium>=0.29",
+]
+tuning = ["ray[tune]>=2.9"]
 tracking = ["mlflow>=2.12"]
 
 [build-system]

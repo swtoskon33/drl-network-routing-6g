@@ -19,6 +19,7 @@ from drl_routing.scheduling.aarl import SchedulingGymEnv, evaluate, train
 from drl_routing.scheduling.env import SchedulingEnv
 from drl_routing.scheduling.mesh import SchedulingConfig, build_mesh
 from drl_routing.scheduling.rpma import run_rpma
+from drl_routing.tracking import track
 
 OUT = Path("docs/scheduling_benchmark.md")
 SLOT_BUDGET_MS = 10.0
@@ -107,6 +108,17 @@ def main(sizes=("small", "medium", "large"), steps: int = 60_000,
         print(f"{size:7} aarl  goodput={aarl['goodput']:.3f} "
               f"slots={aarl['slots']:5.1f} decision={aarl['decision_ms']:7.2f} ms "
               f"(trained {train_minutes:.1f} min)")
+
+        with track("scheduling", f"{size}-{steps}steps") as log:
+            log(params={"mesh": size, "links": len(env.mesh.links),
+                        "steps": steps, "interference": interference,
+                        "packets": PACKETS[size], "alpha": 10.0},
+                metrics={"rpma_goodput": rpma_summary["goodput"],
+                         "rpma_decision_ms": rpma_ms,
+                         "aarl_goodput": aarl["goodput"],
+                         "aarl_decision_ms": aarl["decision_ms"],
+                         "aarl_slots": aarl["slots"],
+                         "train_minutes": train_minutes})
 
         rows.append({
             "size": size,
