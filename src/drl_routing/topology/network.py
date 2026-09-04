@@ -7,6 +7,7 @@ which is the whole reason a learned policy might beat a static one.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 import networkx as nx
 
@@ -64,15 +65,15 @@ class Network:
 
     def apply_load(self, path: list[int], demand_mbps: float) -> None:
         """Add a flow's demand to every link along its path."""
-        for s, t in zip(path, path[1:]):
+        for s, t in pairwise(path):
             self.links[(s, t)].load_mbps += demand_mbps
 
     def path_delay_ms(self, path: list[int]) -> float:
         """Total delay along a path under the current load."""
-        return sum(self.links[(s, t)].effective_delay_ms for s, t in zip(path, path[1:]))
+        return sum(self.links[(s, t)].effective_delay_ms for s, t in pairwise(path))
 
     def path_is_valid(self, path: list[int]) -> bool:
-        return all((s, t) in self.links for s, t in zip(path, path[1:]))
+        return all((s, t) in self.links for s, t in pairwise(path))
 
     def max_utilisation(self) -> float:
         return max((link.utilisation for link in self.links.values()), default=0.0)

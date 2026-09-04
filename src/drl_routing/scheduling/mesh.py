@@ -13,7 +13,7 @@ are what the agent is trained to avoid.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import networkx as nx
 import numpy as np

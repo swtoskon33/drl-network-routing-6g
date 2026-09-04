@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 import networkx as nx
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 MAX_DEGREE = 7          # padded neighbour slots; the densest IAB node has 7 links
 MAX_STEPS = 10          # abandon the packet after this many hops
@@ -496,7 +496,7 @@ def evaluate(env: IabRoutingEnv, actor: Actor, ue_ids: list[int]):
             with torch.no_grad():
                 a, _, _ = actor.act(torch.tensor(s).unsqueeze(0).to(dev),
                                     deterministic=True, mask=mask)
-            s, r, done, _ = env.step(a.item())
+            s, _r, done, _ = env.step(a.item())
             path.append(env.node)
             steps += 1
         reached = env.node == env.donor

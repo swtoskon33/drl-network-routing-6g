@@ -13,6 +13,8 @@ alpha = 10.
 """
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 
 try:
@@ -25,7 +27,7 @@ except ImportError:      # the environment itself does not need gymnasium
     GYM_AVAILABLE = False
 
 from drl_routing.scheduling.env import SchedulingEnv
-from drl_routing.scheduling.mesh import MmWaveMesh, SchedulingConfig, build_mesh
+from drl_routing.scheduling.mesh import SchedulingConfig, build_mesh
 
 
 class SchedulingGymEnv(gym.Env if GYM_AVAILABLE else object):
@@ -37,7 +39,7 @@ class SchedulingGymEnv(gym.Env if GYM_AVAILABLE else object):
     space is the same argument taken to its limit.
     """
 
-    metadata = {"render_modes": []}
+    metadata: ClassVar[dict] = {"render_modes": []}
 
     def __init__(self, size: str = "small", alpha: float = 10.0,
                  interference_level: float = 0.6, workload: str = "uniform",

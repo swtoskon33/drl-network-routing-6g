@@ -21,7 +21,7 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 
-from drl_routing.scheduling.mesh import MmWaveMesh, Packet, SchedulingConfig
+from drl_routing.scheduling.mesh import MmWaveMesh, Packet
 
 ALPHA_DROP_INSENSITIVE = 1.0
 ALPHA_DROP_SENSITIVE = 10.0

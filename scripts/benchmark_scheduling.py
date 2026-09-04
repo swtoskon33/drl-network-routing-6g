@@ -13,9 +13,7 @@ import random
 import time
 from pathlib import Path
 
-import numpy as np
-
-from drl_routing.scheduling.aarl import SchedulingGymEnv, evaluate, train
+from drl_routing.scheduling.aarl import evaluate, train
 from drl_routing.scheduling.env import SchedulingEnv
 from drl_routing.scheduling.mesh import SchedulingConfig, build_mesh
 from drl_routing.scheduling.rpma import run_rpma

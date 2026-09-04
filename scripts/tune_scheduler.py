@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 def trial(config: dict) -> None:
     """One training run at the sampled hyperparameters."""
     from ray import train as ray_train
+    from stable_baselines3 import PPO
 
     from drl_routing.scheduling.aarl import SchedulingGymEnv, evaluate
-    from stable_baselines3 import PPO
 
     env = SchedulingGymEnv(size=config["size"], alpha=config["alpha"],
                            interference_level=config["interference"])

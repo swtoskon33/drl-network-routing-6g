@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import math
 from dataclasses import dataclass
+from itertools import pairwise
 
 import networkx as nx
 
@@ -57,7 +58,7 @@ def path_delay_ms(g: nx.Graph, path: list[int], active_ues: int = 40) -> float:
 def path_reliability(g: nx.Graph, path: list[int]) -> float:
     """P(q) = product of (1 - pb) over links in the path, Eq. (3) with pc=0."""
     p = 1.0
-    for u, v in zip(path, path[1:]):
+    for u, v in pairwise(path):
         p *= (1.0 - g[u][v]["pb"])
     return p
 
@@ -121,7 +122,7 @@ def compare(topology_csv: str, donor: int = 0, ue_ids: list[int] | None = None,
         if not nx.has_path(g, donor, ue):
             continue
 
-        opt_path, mu = dijkstra_optimal(g, donor, ue, sigma)
+        opt_path, _mu = dijkstra_optimal(g, donor, ue, sigma)
         results.append(RouteResult(ue, "dijkstra_optimal", opt_path,
                                     path_delay_ms(g, opt_path), path_reliability(g, opt_path),
                                     len(opt_path) - 1))
