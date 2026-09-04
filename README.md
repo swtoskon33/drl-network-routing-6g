@@ -38,7 +38,7 @@ of dropped packets rather than latency: minimising delivery time invites droppin
 to flatter the average. The hard constraint is time — the decision has to be made inside
 one slot, which rules out searching the combinatorial space directly.
 
-## What is implemented
+## Implementation
 
 | Paper | Here |
 |-------|------|
