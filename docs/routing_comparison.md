@@ -4,8 +4,8 @@ All three routing policies on the same topology and the same UEs, from the ns-3 
 
 | Policy | Information | Reached donor | Mean hops | Mean delay (ms) | Mean reliability |
 |--------|-------------|---------------|-----------|-----------------|------------------|
-| dijkstra_optimal | global graph | 36/36 | 3.50 | 11.26 | 0.9122 |
-| greedy | neighbours only | 36/36 | 4.28 | 14.73 | 0.9306 |
-| sac | neighbours only (learned) | 36/36 | 3.50 | 11.80 | 0.9102 |
+| dijkstra_optimal | global graph | 36/36 | 3.83 | 1.70 | 0.8192 |
+| greedy | neighbours only | 36/36 | 3.83 | 1.70 | 0.8192 |
+| sac | neighbours only (learned) | 36/36 | 3.83 | 1.70 | 0.6161 |
 
-On delay the learned policy beats greedy by 19.9% (11.80 ms against 14.73 ms), on the same local information. Against the global-knowledge optimum it is +4.7% (11.80 ms against 11.26 ms). That gap is the price of deciding hop by hop without seeing the graph, and closing it is what a learned policy is for: Dijkstra needs a full, current view of every link, which a real IAB network does not hand to each node.
+On delay the learned policy loses to greedy by 0.0% (1.70 ms against 1.70 ms), on the same local information. Against the global-knowledge optimum it is +0.0% (1.70 ms against 1.70 ms). That gap is the price of deciding hop by hop without seeing the graph, and closing it is what a learned policy is for: Dijkstra needs a full, current view of every link, which a real IAB network does not hand to each node.

@@ -36,6 +36,34 @@ RELIABILITY_TARGET = 0.999      # sigma
 PSI_D = 1.0
 PSI_R = 0.5
 
+# Traffic model from Section V: FTP model 3, 0.1 Mbyte packets arriving as a Poisson
+# process with mean 100/3 per second, DL/UL ratio 4:1. The transmission block size for
+# the MCS the scheduler picks follows TS 38.214; Ttrans = ceil(pkt/TB) * TTI.
+PACKET_BYTES = 0.1e6
+TB_BYTES = 100000.0                     # transport block at 100 MHz, numerology 3,
+                                        # 256QAM: about 100 kbyte per slot
+UE_ARRIVAL_RATE = 100.0 / 3.0           # packets per second per UE
+DEFAULT_UE_COUNT = 40                   # the fixed-topology case in Fig. 6 and 7
+
+
+def transmission_time_ms(packet_bytes: float = PACKET_BYTES) -> float:
+    """Ttrans = ceil(pkt / TB) * TTI, per Eq. (1)."""
+    return math.ceil(packet_bytes / TB_BYTES) * TTI_MS
+
+
+def queueing_delay_ms(active_ues: int, hops: int) -> float:
+    """Queueing delay under TDMA, which is what makes latency grow with the UE count.
+
+    Section V ties the rise in Fig. 5(a) to Tque: more UEs means more contention for the
+    same slots. An M/D/1 waiting time on the aggregate arrival rate captures that
+    behaviour -- the delay climbs slowly while the link is lightly loaded and sharply as
+    utilisation approaches one.
+    """
+    service_ms = transmission_time_ms()
+    arrivals_per_ms = active_ues * UE_ARRIVAL_RATE / 1000.0
+    utilisation = min(arrivals_per_ms * service_ms, 0.95)
+    return (utilisation * service_ms) / (2 * (1 - utilisation))
+
 
 def load_topology(path: str) -> nx.Graph:
     g = nx.Graph()
@@ -50,16 +78,57 @@ class IabRoutingEnv:
     """Single-agent env: place a packet at a UE, choose next hops until the
     donor is reached (or MAX_STEPS runs out). Local state only."""
 
-    def __init__(self, g: nx.Graph, donor: int = 0):
+    def __init__(self, g: nx.Graph, donor: int = 0,
+                 active_ues: int = DEFAULT_UE_COUNT):
         self.g = g
         self.donor = donor
+        self.active_ues = active_ues
         self.hop_to_donor = nx.single_source_shortest_path_length(g, donor)
         self.neighbours = {n: sorted(g.neighbors(n))[:MAX_DEGREE] for n in g.nodes}
-        self.default_next_hop = self._preconfigured_routes(mu=1.0)
+        self.default_next_hop = self._preconfigured_routes(self._bisect_mu())
         self.route_quality = self._route_quality()
         self.state_dim = MAX_DEGREE * 5 + 2   # per-neighbour [exists, delay, pb, downstream delay, downstream reliability]
         self.action_dim = MAX_DEGREE
         self.reset(random.choice(list(g.nodes)))
+
+    def _bisect_mu(self, tolerance: float = 1e-3, iterations: int = 40) -> float:
+        """Algorithm 1: bisect the Lagrange multiplier until the configured routes meet
+        the reliability target.
+
+        A fixed mu understates the cost of an unreliable link. At mu = 1 the penalty for
+        a blocked link is log(1/0.5) = 0.69, cheaper than one extra hop, so the
+        configured route runs straight through blocked links and the agent -- which
+        learns its state and its warm start from that route -- inherits the preference.
+        The Dijkstra baseline bisects to mu* around 3.8 on this topology.
+        """
+        low, high = 0.0, 100.0
+        best = high
+        for _ in range(iterations):
+            mu = (low + high) / 2
+            routes = self._preconfigured_routes(mu)
+            worst = min((self._route_reliability(node, routes)
+                         for node in self.g.nodes if node != self.donor), default=0.0)
+            if worst >= RELIABILITY_TARGET:
+                best = mu
+                high = mu
+            else:
+                low = mu
+            if high - low < tolerance:
+                break
+        return best
+
+    def _route_reliability(self, node: int, routes: dict) -> float:
+        """Success probability along a configured route, Eq. (3) with pc = 0."""
+        product = 1.0
+        seen = set()
+        while node != self.donor:
+            if node in seen or node not in routes:
+                return 0.0
+            seen.add(node)
+            nxt = routes[node]
+            product *= max(1.0 - self.g[node][nxt]["pb"], 1e-9)
+            node = nxt
+        return product
 
     def _preconfigured_routes(self, mu: float) -> dict:
         """The Dijkstra solution to Problem 1, used as the default routing setup.
@@ -82,13 +151,28 @@ class IabRoutingEnv:
         route. This is the T_delay and P that Eq. (8) puts in the state for every
         neighbour."""
         quality = {self.donor: (0.0, 1.0)}
-        order = sorted(self.hop_to_donor, key=lambda n: self.hop_to_donor[n])
-        for node in order:
+
+        def route_length(node: int) -> int:
+            """How many hops the configured route takes, which is not the same as the
+            shortest hop count: the route avoids blocked links and may go the long way
+            round. Ordering by hop count leaves a node's next hop uncomputed when the
+            route is longer, and its downstream reliability then falls back to zero --
+            the agent sees a valid route reported as unusable."""
+            steps, seen = 0, set()
+            while node != self.donor and node not in seen and steps <= len(self.g):
+                seen.add(node)
+                node = self.default_next_hop.get(node)
+                if node is None:
+                    return len(self.g) + 1
+                steps += 1
+            return steps
+
+        for node in sorted(self.g.nodes, key=route_length):
             if node == self.donor:
                 continue
             nxt = self.default_next_hop.get(node)
             if nxt is None or nxt not in quality:
-                quality[node] = (50.0, 0.0)    # unreachable on the configured route
+                quality[node] = (50.0, 0.0)
                 continue
             d_next, rel_next = quality[nxt]
             link = self.g[node][nxt]
@@ -165,7 +249,10 @@ class IabRoutingEnv:
         With immediate scheduling Tque is zero and n is the number of relays.
         """
         relays = max(self.steps - 1, 0)
-        return (relays + 2) / 2 * T_PROC_MS + self.cum_delay
+        hops = self.steps
+        t_que = queueing_delay_ms(self.active_ues, hops)
+        t_trans = hops * transmission_time_ms()
+        return t_que + (relays + 2) / 2 * T_PROC_MS + t_trans
 
     def step(self, action: int):
         nbrs = self.neighbours[self.node]
@@ -214,9 +301,12 @@ class IabRoutingEnv:
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim):
         super().__init__()
+        # Actor network from Table II: (128, 512, 512, 128)
         self.net = nn.Sequential(nn.Linear(state_dim, 128), nn.ReLU(),
-                                  nn.Linear(128, 128), nn.ReLU(),
-                                  nn.Linear(128, action_dim))
+                                 nn.Linear(128, 512), nn.ReLU(),
+                                 nn.Linear(512, 512), nn.ReLU(),
+                                 nn.Linear(512, 128), nn.ReLU(),
+                                 nn.Linear(128, action_dim))
 
     def forward(self, s):
         return self.net(s)   # logits
@@ -241,9 +331,14 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(state_dim, 128), nn.ReLU(),
-                                  nn.Linear(128, 128), nn.ReLU(),
-                                  nn.Linear(128, action_dim))
+        # Critic network from Table II: (256, 1024, 1024, 256). The paper notes the
+        # critic is deliberately larger than the actor, since predicting values for every
+        # action is the harder learning problem.
+        self.net = nn.Sequential(nn.Linear(state_dim, 256), nn.ReLU(),
+                                 nn.Linear(256, 1024), nn.ReLU(),
+                                 nn.Linear(1024, 1024), nn.ReLU(),
+                                 nn.Linear(1024, 256), nn.ReLU(),
+                                 nn.Linear(256, action_dim))
 
     def forward(self, s):
         return self.net(s)   # Q(s, .) for every discrete action
@@ -274,16 +369,33 @@ class ReplayBuffer:
         return len(self.data)
 
 
+def _device():
+    """Apple MPS or CUDA when available.
+
+    The Table II networks (critic 256-1024-1024-256, batch 1024) are slow enough on CPU
+    that a full run takes the better part of an hour on a laptop.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def train_sac(g: nx.Graph, donor: int, ue_ids: list[int], episodes: int = 3000,
-              gamma: float = 0.99, lr: float = 3e-4, batch_size: int = 128):
+              gamma: float = 0.99, lr: float = 1e-3, batch_size: int = 1024):
     env = IabRoutingEnv(g, donor)
-    actor = Actor(env.state_dim, env.action_dim)
-    q1, q2 = Critic(env.state_dim, env.action_dim), Critic(env.state_dim, env.action_dim)
-    q1_t, q2_t = Critic(env.state_dim, env.action_dim), Critic(env.state_dim, env.action_dim)
+    dev = _device()
+    print(f'training on {dev}')
+    actor = Actor(env.state_dim, env.action_dim).to(dev)
+    q1, q2 = (Critic(env.state_dim, env.action_dim).to(dev),
+              Critic(env.state_dim, env.action_dim).to(dev))
+    q1_t, q2_t = (Critic(env.state_dim, env.action_dim).to(dev),
+                  Critic(env.state_dim, env.action_dim).to(dev))
     q1_t.load_state_dict(q1.state_dict())
     q2_t.load_state_dict(q2.state_dict())
 
-    log_alpha = torch.zeros(1, requires_grad=True)
+    log_alpha = torch.zeros(1, requires_grad=True, device=dev)
     # Target entropy is set against the number of actions actually available, not the
     # padded action space. Most nodes have far fewer real neighbours than MAX_DEGREE, so
     # aiming at log(MAX_DEGREE) asks the policy to stay uniform over choices that do not
@@ -306,7 +418,7 @@ def train_sac(g: nx.Graph, donor: int, ue_ids: list[int], episodes: int = 3000,
         s = env.reset(ue)
         done = False
         while not done:
-            mask = torch.tensor(env.action_mask()).unsqueeze(0)
+            mask = torch.tensor(env.action_mask()).unsqueeze(0).to(dev)
             # The agent starts on the configured route and takes over gradually. Without
             # this it never completes an episode, so the buffer holds no transition that
             # reached the donor and there is nothing to learn from.
@@ -316,7 +428,7 @@ def train_sac(g: nx.Graph, donor: int, ue_ids: list[int], episodes: int = 3000,
                 a = default
             else:
                 with torch.no_grad():
-                    act, _, _ = actor.act(torch.tensor(s).unsqueeze(0), mask=mask)
+                    act, _, _ = actor.act(torch.tensor(s).unsqueeze(0).to(dev), mask=mask)
                 a = act.item()
             mask_now = env.action_mask()
             s2, r, done, _ = env.step(a)
@@ -326,6 +438,8 @@ def train_sac(g: nx.Graph, donor: int, ue_ids: list[int], episodes: int = 3000,
 
             if len(buf) >= batch_size:
                 S, A, R, S2, D, M, M2 = buf.sample(batch_size)
+                S, A, R, S2, D = S.to(dev), A.to(dev), R.to(dev), S2.to(dev), D.to(dev)
+                M, M2 = M.to(dev), M2.to(dev)
                 alpha = log_alpha.exp()
 
                 with torch.no_grad():
@@ -370,9 +484,10 @@ def evaluate(env: IabRoutingEnv, actor: Actor, ue_ids: list[int]):
         done = False
         steps = 0
         while not done and steps < MAX_STEPS:
-            mask = torch.tensor(env.action_mask()).unsqueeze(0)
+            dev = next(actor.parameters()).device
+            mask = torch.tensor(env.action_mask()).unsqueeze(0).to(dev)
             with torch.no_grad():
-                a, _, _ = actor.act(torch.tensor(s).unsqueeze(0),
+                a, _, _ = actor.act(torch.tensor(s).unsqueeze(0).to(dev),
                                     deterministic=True, mask=mask)
             s, r, done, _ = env.step(a.item())
             path.append(env.node)

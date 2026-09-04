@@ -17,6 +17,11 @@ from dataclasses import dataclass
 
 import networkx as nx
 
+from drl_routing.agents.sac_routing import (
+    queueing_delay_ms,
+    transmission_time_ms,
+)
+
 TTI_MS = 0.125          # numerology 3: TTI = 1 / 2^3 ms
 T_PROC_MS = 4 * TTI_MS   # Tproc = 4 * TTI (paper, Sec III-A)
 
@@ -34,11 +39,19 @@ def load_topology(path: str) -> nx.Graph:
     return g
 
 
-def path_delay_ms(g: nx.Graph, path: list[int]) -> float:
-    """Total latency of a path per Eq. (2): Tproc once at source, plus a
-    transmission-time term per hop (relay processing already folded in)."""
-    trans = sum(g[u][v]["delay_ms"] for u, v in zip(path, path[1:]))
-    return T_PROC_MS + trans
+def path_delay_ms(g: nx.Graph, path: list[int], active_ues: int = 40) -> float:
+    """Total latency of a path per Eq. (2).
+
+    Tdelay = Tque + (n+2)/2 * Tproc + sum of transmission times, where n is the number
+    of relays. The transmission time per hop is ceil(pkt/TB) * TTI from Eq. (1), not the
+    scheduling delay stored on the link -- the agent uses the same model, and comparing
+    the two against different latency definitions would measure nothing.
+    """
+    hops = len(path) - 1
+    relays = max(hops - 1, 0)
+    t_que = queueing_delay_ms(active_ues, hops)
+    t_trans = hops * transmission_time_ms()
+    return t_que + (relays + 2) / 2 * T_PROC_MS + t_trans
 
 
 def path_reliability(g: nx.Graph, path: list[int]) -> float:

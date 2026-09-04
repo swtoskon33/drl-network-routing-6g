@@ -37,6 +37,35 @@ int main(int argc, char *argv[])
     cmd.Parse(argc, argv);
 
     std::mt19937 rng(seed);
+    // Block error rate from the 3GPP mmWave link budget rather than a uniform draw.
+    // TR 38.901 Urban Micro at 28 GHz: PL = 32.4 + 21*log10(d) + 20*log10(f_GHz) for
+    // LOS, plus a 20 dB penalty when the link is blocked. SINR follows from 23 dBm TX
+    // power, 100 MHz bandwidth and a 7 dB noise figure; the BLER curve is the standard
+    // sigmoid around the MCS threshold. Distances come from the hexagonal layout in
+    // Fig. 4: the donor at the centre, IAB nodes on 200 m rings.
+    std::uniform_real_distribution<double> blockDist(0.0, 1.0);
+
+    auto pathlossDb = [](double distM, bool los) {
+        double pl = 32.4 + 21.0 * std::log10(std::max(distM, 1.0)) + 20.0 * std::log10(28.0);
+        return los ? pl : pl + 20.0;   // NLOS penalty from blockage
+    };
+
+    auto blerFromSinr = [](double sinrDb) {
+        // sigmoid BLER curve: ~0.1 at the MCS threshold, falling sharply above it
+        const double threshold = 12.0;   // dB, for the MCS the scheduler picks
+        return 1.0 / (1.0 + std::exp(1.2 * (sinrDb - threshold)));
+    };
+
+    const double txPowerDbm = 23.0;
+    // Beamforming gain from the phased arrays at both ends. Without it no 28 GHz link
+    // closes at 200 m: the budget above gives 0.3 dB SINR, well under the MCS threshold,
+    // and every link would sit at the BLER ceiling. 12 dBi at the IAB node and 10 dBi at
+    // the UE is a conventional array pair for this band.
+    const double beamGainDb = 22.0;
+    const double noiseFigureDb = 7.0;
+    const double bandwidthHz = 100e6;
+    const double thermalNoiseDbm = -174.0 + 10.0 * std::log10(bandwidthHz) + noiseFigureDb;
+
     std::uniform_real_distribution<double> pbDist(0.001, 0.05);
     std::uniform_real_distribution<double> delayJitter(0.8, 1.2);
 
@@ -55,7 +84,15 @@ int main(int argc, char *argv[])
 
     auto addLink = [&](uint32_t a, uint32_t b, double baseDelay) {
         double d = baseDelay * delayJitter(rng);
-        double pb = pbDist(rng);
+        // Hexagonal layout of Fig. 4: IAB nodes sit on 200 m rings around the donor,
+        // UE access links are shorter. The stored delay is the scheduling delay, not
+        // propagation, so distance comes from the layout rather than from it.
+        bool accessLink = (a >= 19 || b >= 19);
+        double distM = accessLink ? 80.0 : 200.0;
+        bool los = blockDist(rng) > 0.2;          // 20% of links blocked at any time
+        double rxDbm = txPowerDbm + beamGainDb - pathlossDb(distM, los);
+        double sinrDb = rxDbm - thermalNoiseDbm;
+        double pb = std::min(std::max(blerFromSinr(sinrDb), 1e-4), 0.5);
         links.push_back({a, b, d, pb, 1000.0});
     };
 
