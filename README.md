@@ -1,28 +1,42 @@
 # drl-network-routing
 
-Routing for a 5G Integrated Access and Backhaul (IAB) network: a Dijkstra optimum with
-global knowledge, a greedy baseline, and a Soft Actor-Critic agent that decides hop by
-hop from local information alone. The topology and link conditions come from an ns-3
-scenario in C++.
+Deep reinforcement learning for two decisions in a 5G millimetre-wave mesh, each from a
+published paper, each with the non-learned baseline it has to beat.
 
-Implements the method of Yin, Roy and Cao, *Routing and Resource Allocation for IAB
-Multi-Hop Network in 5G Advanced*, IEEE Transactions on Communications 70(10), 2022
+**Routing** — where does a packet go? A Dijkstra optimum with the whole graph, a greedy
+baseline, and a Soft Actor-Critic agent choosing hop by hop from local information alone.
+After Yin, Roy and Cao, *Routing and Resource Allocation for IAB Multi-Hop Network in 5G
+Advanced*, IEEE Transactions on Communications 70(10), 2022
 ([DOI](https://doi.org/10.1109/TCOMM.2022.3200673),
 [open PDF](https://par.nsf.gov/servlets/purl/10359622)).
 
-## The problem
+**Scheduling** — which links transmit this slot, and at what power? Activating every link
+is worse than activating a well-chosen subset, because they interfere. A PPO agent
+against a combinatorial baseline, where the argument is as much about decision time as
+quality: a forward pass fits in the 10 ms slot and a search over power levels does not.
+After Gahtan, Cohen, Bronstein and Kedar, *Using Deep Reinforcement Learning for mmWave
+Real-Time Scheduling*, NoF 2023 ([DOI](https://doi.org/10.1109/NoF58724.2023.10302794)).
 
-An IAB network extends coverage by relaying user traffic through wireless backhaul nodes
-to a donor with a fibre connection. Every extra hop costs latency and reliability, and
-mmWave links fail suddenly when something blocks them. Problem 1 of the paper asks for
-the minimum-latency path subject to a reliability floor:
+The topology and link conditions come from an ns-3 scenario in C++.
 
-```
-    minimise  T_delay(q)     subject to  P(q) >= sigma
-```
+## The problems
 
-with a 5 ms latency budget and 0.999 success probability, the 3GPP targets for VR/AR
-traffic.
+**Routing under a reliability constraint.** An IAB network extends coverage by relaying
+user traffic through wireless backhaul nodes to a donor with a fibre connection. Every
+extra hop costs latency and reliability, and mmWave links fail suddenly when something
+blocks them. Problem 1 of the first paper asks for the minimum-latency path subject to a
+reliability floor:
+minimise  T_delay(q)     subject to  P(q) >= sigma
+
+with a 5 ms budget and 0.999 success probability, the 3GPP targets for VR/AR traffic.
+With global knowledge this is Dijkstra on a Lagrangian weight; the interesting version is
+solving it from local information only.
+
+**Scheduling under interference.** Links that transmit at the same time degrade each
+other, so the scheduler picks a subset and a power for each. The objective is the number
+of dropped packets rather than latency: minimising delivery time invites dropping packets
+to flatter the average. The hard constraint is time — the decision has to be made inside
+one slot, which rules out searching the combinatorial space directly.
 
 ## What is implemented
 

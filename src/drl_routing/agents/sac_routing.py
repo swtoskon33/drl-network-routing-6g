@@ -283,12 +283,19 @@ class IabRoutingEnv:
                         + (-1) ** outcome)
         reward = PSI_D * latency_term - PSI_R * (transmissions - 1)
 
-        # Shaping toward the donor. The paper's agents sit on a pre-configured Dijkstra
-        # route and adjust it; ours starts from nothing, so without a gradient on hop
-        # count it never discovers where the donor is.
+        # Shaping toward the donor. The paper does not need this: its agents sit on
+        # the configured route from the start, so progress is implicit. Ours has to
+        # discover the donor, and without a gradient on hop count it wanders.
+        #
+        # The weight matters more than it looks. At a flat bonus per hop the agent learns
+        # "get closer" and nothing else: for UE 25 it took 25-4-3-2-1-0, five hops through
+        # three blocked links, over the configured 25-4-5-6-1-7-0, six hops all clean. A
+        # blocked link has to cost more than the hop it saves, so the bonus is scaled by
+        # the reliability of the link taken to earn it.
         before = self.hop_to_donor.get(prev, MAX_STEPS)
         after = self.hop_to_donor.get(self.node, MAX_STEPS)
-        reward += 5.0 * (before - after)
+        progress = before - after
+        reward += 5.0 * progress * (ps ** 2 if progress > 0 else 1.0)
 
         if self.node == self.donor:
             reward += 30.0
