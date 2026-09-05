@@ -26,6 +26,8 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.pytest.ini_options]
+# the ns-3 checkout carries its own test suite; only ours is collected
+testpaths = ["tests"]
 markers = ["unit", "integration"]
 
 [tool.ruff]

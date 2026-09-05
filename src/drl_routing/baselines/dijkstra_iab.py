@@ -81,18 +81,31 @@ def dijkstra_optimal(g: nx.Graph, src: int, dst: int, sigma: float,
     reach sigma (i.e. the constraint is infeasible on this graph).
     """
     mu_low, mu_high = 0.0, mu_max
-    best_path = nx.shortest_path(g, src, dst, weight=lambda u, v, d: 0.5 * T_PROC_MS + d["delay_ms"])
+
+    # Keep the best feasible path found, not the last one tried. Bisection walks through
+    # infeasible values of mu on its way to mu*, and each of those yields a path that
+    # misses sigma; returning whichever came last hands back a route the constraint
+    # rejects even when a valid one exists.
+    best_path: list[int] | None = None
+    best_mu = mu_max
+
     for _ in range(iters):
         mu = (mu_low + mu_high) / 2.0
-        h = _weighted_graph(g, mu)
-        path = nx.shortest_path(h, src, dst, weight="weight")
-        rel = path_reliability(g, path)
-        best_path = path
-        if rel < sigma:
-            mu_low = mu       # need more weight on reliability
+        path = nx.shortest_path(_weighted_graph(g, mu), src, dst, weight="weight")
+        if path_reliability(g, path) >= sigma:
+            best_path, best_mu = path, mu
+            mu_high = mu       # constraint met: push back toward minimum latency
         else:
-            mu_high = mu       # constraint satisfied, tighten back toward min-latency
-    return best_path, mu_low
+            mu_low = mu        # more weight on reliability
+
+    if best_path is None:
+        # sigma is unreachable on this graph; fall back to the most reliable route there
+        # is, so the caller gets the best available rather than a min-latency one
+        best_path = nx.shortest_path(
+            g, src, dst, weight=lambda u, v, d: math.log(1.0 / max(1.0 - d["pb"], 1e-9)))
+        best_mu = mu_max
+
+    return best_path, best_mu
 
 
 def greedy_path(g: nx.Graph, src: int, dst: int) -> list[int]:
@@ -115,7 +128,9 @@ def compare(topology_csv: str, donor: int = 0, ue_ids: list[int] | None = None,
             sigma: float = 0.999) -> list[RouteResult]:
     g = load_topology(topology_csv)
     if ue_ids is None:
-        ue_ids = [n for n in g.nodes if n >= 19]  # UE id range from the ns-3 scenario
+        # a UE is a leaf of the mesh: one link, and not the donor. The old test used a
+        # literal id range, which only held for the eighteen-node scenario.
+        ue_ids = [n for n in g.nodes if g.degree(n) == 1 and n != donor]
 
     results: list[RouteResult] = []
     for ue in sorted(ue_ids):
