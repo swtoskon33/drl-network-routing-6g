@@ -26,12 +26,21 @@ int main(int argc, char *argv[])
 {
     double simTime = 20.0;
     uint32_t seed = 42;
+    // Knobs the scenario sweep varies. One deployment tells you whether a policy learned
+    // that deployment; a sweep over blockage, load and mesh size tells you whether it
+    // learned to route.
+    double blockageProb = 0.2;
+    uint32_t ueCount = 36;
+    uint32_t iabRings = 3;
     std::string topoOut = "topology.csv";
     std::string flowOut = "flows.csv";
 
     CommandLine cmd;
     cmd.AddValue("simTime", "Simulation time (s)", simTime);
-    cmd.AddValue("seed", "RNG seed for random pb per link", seed);
+    cmd.AddValue("seed", "RNG seed", seed);
+    cmd.AddValue("blockageProb", "Fraction of links blocked at any moment", blockageProb);
+    cmd.AddValue("ueCount", "Number of UEs attached to the mesh", ueCount);
+    cmd.AddValue("iabRings", "IAB node rings around the donor (1 to 3)", iabRings);
     cmd.AddValue("topoOut", "Path to write topology.csv", topoOut);
     cmd.AddValue("flowOut", "Path to write flows.csv", flowOut);
     cmd.Parse(argc, argv);
@@ -70,8 +79,10 @@ int main(int argc, char *argv[])
     std::uniform_real_distribution<double> delayJitter(0.8, 1.2);
 
     const uint32_t DONOR = 0;
-    const uint32_t NUM_IAB = 18;
-    const uint32_t NUM_UE_PER_IAB = 2;
+    // The mesh is iabRings hexagonal grids of six nodes, per Fig. 4; the UE count is
+    // spread evenly across them.
+    const uint32_t NUM_IAB = iabRings * 6;
+    const uint32_t NUM_UE_PER_IAB = std::max(1u, ueCount / (iabRings * 6));
     const uint32_t FIRST_IAB = 1;
     const uint32_t FIRST_UE = FIRST_IAB + NUM_IAB;
     const uint32_t NUM_UE = NUM_IAB * NUM_UE_PER_IAB;
@@ -87,16 +98,16 @@ int main(int argc, char *argv[])
         // Hexagonal layout of Fig. 4: IAB nodes sit on 200 m rings around the donor,
         // UE access links are shorter. The stored delay is the scheduling delay, not
         // propagation, so distance comes from the layout rather than from it.
-        bool accessLink = (a >= 19 || b >= 19);
+        bool accessLink = (a > NUM_IAB || b > NUM_IAB);
         double distM = accessLink ? 80.0 : 200.0;
-        bool los = blockDist(rng) > 0.2;          // 20% of links blocked at any time
+        bool los = blockDist(rng) > blockageProb;
         double rxDbm = txPowerDbm + beamGainDb - pathlossDb(distM, los);
         double sinrDb = rxDbm - thermalNoiseDbm;
         double pb = std::min(std::max(blerFromSinr(sinrDb), 1e-4), 0.5);
         links.push_back({a, b, d, pb, 1000.0});
     };
 
-    for (uint32_t g = 0; g < 3; g++) {
+    for (uint32_t g = 0; g < iabRings; g++) {
         uint32_t base = FIRST_IAB + g * 6;
         for (uint32_t i = 0; i < 6; i++) {
             uint32_t a = base + i;
@@ -105,9 +116,13 @@ int main(int argc, char *argv[])
         }
         addLink(DONOR, base, 5.0);
     }
-    addLink(FIRST_IAB, FIRST_IAB + 6, 4.0);
-    addLink(FIRST_IAB + 6, FIRST_IAB + 12, 4.0);
-    addLink(FIRST_IAB + 12, FIRST_IAB, 4.0);
+    // join the rings to each other, so traffic can cross between them
+    for (uint32_t g = 0; g + 1 < iabRings; g++) {
+        addLink(FIRST_IAB + g * 6, FIRST_IAB + (g + 1) * 6, 4.0);
+    }
+    if (iabRings > 2) {
+        addLink(FIRST_IAB + (iabRings - 1) * 6, FIRST_IAB, 4.0);
+    }
 
     for (uint32_t n = 0; n < NUM_IAB; n++) {
         uint32_t iabId = FIRST_IAB + n;
