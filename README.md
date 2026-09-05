@@ -155,15 +155,20 @@ one slot, which rules out searching the combinatorial space directly.
 
 ## Running it
 
+### The ns-3 scenario
+
 ```
-# build and run the ns-3 scenario (writes topology.csv and flows.csv)
 cd ns3/ns-allinone-3.46.1/ns-3.46.1
 cp ../../../ns3-scenario/iab_routing_scenario.cc scratch/
 ./ns3 build
-./ns3 run "iab_routing_scenario --topoOut=../../../ns3-scenario/traces/topology.csv \\
-                                --flowOut=../../../ns3-scenario/traces/flows.csv"
+./ns3 run "iab_routing_scenario \\
+    --topoOut=../../../ns3-scenario/traces/topology.csv \\
+    --flowOut=../../../ns3-scenario/traces/flows.csv"
+```
 
-# baselines and agent
+### Routing
+
+```
 python src/drl_routing/baselines/dijkstra_iab.py ns3-scenario/traces/topology.csv \\
     --out ns3-scenario/traces/dijkstra_vs_greedy.csv
 python src/drl_routing/agents/sac_routing.py ns3-scenario/traces/topology.csv \\
@@ -173,6 +178,42 @@ python scripts/compare_routing.py
 
 Training picks up CUDA or Apple MPS when present. The Table II networks are large enough
 that a CPU run takes the better part of an hour; on MPS it is a few minutes.
+
+### Scheduling
+
+```
+# RPMA against the learned policy on all three meshes, plus the interference,
+# workload and drop-sensitivity sweeps
+python scripts/benchmark_scheduling.py --sizes small,medium,large --steps 150000
+```
+
+### Hyperparameter search
+
+The papers fix their hyperparameters. This searches them first, over learning rate,
+rollout length, batch size, discount, entropy coefficient and network width, with ASHA
+stopping the trials that fall behind rather than running every one to the end:
+
+```
+pip install -e ".[tuning]"
+python scripts/tune_scheduler.py --samples 40 --size small
+```
+
+### Tracking
+
+Every benchmark run logs its configuration and results to MLflow, so a number in this
+README traces back to the run that produced it:
+
+```
+pip install -e ".[tracking]"
+mlflow ui        # runs land under the 'scheduling' experiment
+```
+
+### CI
+
+`.github/workflows/ci.yml` runs lint and tests on every push, then a short benchmark:
+2000 training steps, enough to catch a change that breaks training or the baseline and
+not enough to reproduce the published numbers. Those come from a full run, and the
+report is uploaded as a build artifact either way.
 
 ## Layout
 
@@ -186,13 +227,23 @@ src/drl_routing/
   agents/sac_routing.py      discrete SAC: environment, networks, training, evaluation
   topology/network.py        graph model with load-dependent delay
 
-scripts/compare_routing.py   scores every policy on the same UEs
-docs/routing_comparison.md   the comparison table
+  scheduling/mesh.py         topology, capacities, interference matrix
+  scheduling/env.py          buffers, packet movement, drops, reward
+  scheduling/aarl.py         PPO agent and its gym wrapper
+  scheduling/rpma.py         the combinatorial baseline
+  tracking.py                MLflow logging
+
+scripts/compare_routing.py       scores every routing policy on the same UEs
+scripts/benchmark_scheduling.py  RPMA against the learned scheduler
+scripts/tune_scheduler.py        Ray Tune sweep
+docs/routing_comparison.md       routing results
+docs/scheduling_benchmark.md     scheduling results and sweeps
 ```
 
 ## Stack
 
-ns-3.46.1 (C++), Python 3.11, PyTorch, NetworkX.
+ns-3.46.1 (C++), Python 3.11, PyTorch, Stable-Baselines3, Gymnasium, NetworkX,
+Ray Tune, MLflow, GitHub Actions.
 
 ## Licence
 
