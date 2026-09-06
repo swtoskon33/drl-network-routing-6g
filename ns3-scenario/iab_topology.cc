@@ -46,18 +46,36 @@ NoiseFloorDbm(double noiseFigureDb)
     return -174.0 + 10.0 * std::log10(kBandwidthHz) + noiseFigureDb;
 }
 
-/// Block error rate for a given SINR.
+/// Block error rate after link adaptation.
 ///
-/// A sigmoid around the threshold of the modulation and coding scheme the scheduler
-/// would pick. ns-3 mainline has no NR link-to-system mapping, so this stands in for the
-/// BLER curves of TS 38.214: sharp, which is what mmWave links are -- either clean or
-/// unusable, rarely in between.
+/// The scheduler does not transmit at a fixed modulation and coding scheme and accept
+/// whatever error rate follows. It picks the highest MCS whose target BLER the SINR can
+/// support -- 3GPP works to 10% for data, 1% for URLLC -- and only when the link is too
+/// poor for the lowest MCS does the error rate climb.
+///
+/// Without this every NLOS link sits at a BLER of 0.5 and no route in the mesh can reach
+/// the 0.999 reliability target, because the constraint is not a property of the
+/// deployment but of the assumption that nobody adapts.
 double
 BlerFromSinr(double sinrDb)
 {
-    constexpr double kThresholdDb = 12.0;
-    constexpr double kSlope = 1.2;
-    return 1.0 / (1.0 + std::exp(kSlope * (sinrDb - kThresholdDb)));
+    // The lowest MCS in TS 38.214 (QPSK, rate 0.12) needs roughly -6 dB SINR to hit its
+    // target; below that the link cannot carry data at all.
+    constexpr double kLowestMcsSinrDb = -6.0;
+    constexpr double kUrllcTargetBler = 1e-3;
+    constexpr double kFloorBler = 1e-5;
+
+    if (sinrDb < kLowestMcsSinrDb)
+    {
+        // beyond the reach of link adaptation: the link fails more often than it works
+        return 0.5;
+    }
+
+    // Within range the scheduler holds the error rate near the target, with margin above
+    // it as the SINR improves. A decade of BLER per 10 dB is the slope these curves have.
+    const double marginDb = sinrDb - kLowestMcsSinrDb;
+    const double bler = kUrllcTargetBler * std::pow(10.0, -marginDb / 10.0);
+    return std::max(bler, kFloorBler);
 }
 
 struct NodeRecord

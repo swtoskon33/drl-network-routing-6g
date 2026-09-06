@@ -79,21 +79,24 @@ def transmission_time_ms(link: Link, packet_bytes: float = PACKET_BYTES) -> floa
     return math.ceil(packet_bytes / transport_block_bytes(link)) * TTI_MS
 
 
-def collision_probability(active_ues: int, neighbours: int) -> float:
-    """pc: two nearby nodes picking the same subband in the same slot.
+def collision_probability(active_ues: int, neighbours: int,
+                          scheduled: bool = True) -> float:
+    """pc: two nearby nodes transmitting on the same subband in the same slot.
 
-    Section III-B pairs the block error rate with a collision probability. A node with
-    more neighbours has more of them transmitting nearby, so contention rises with the
-    degree. Each neighbour that transmits picks a subband at random; the collision
-    probability is the chance at least one lands on the same one.
+    Section III-C is explicit about the routing problem: the donor has the whole picture,
+    the edge nodes are far enough apart not to interfere, and pc is zero. That is what
+    makes Problem 1 solvable exactly -- with random collisions on every hop the optimum
+    would not be a shortest path at all.
 
-    The earlier version divided the UE count by the degree, which made a denser node
-    contend with fewer transmitters than a sparse one -- pc fell from 0.41 at degree six
-    to 0.35 at degree eight.
+    pc matters where the paper says it does: under the DRL framework of Section IV, where
+    each node schedules from local information and nothing coordinates the subband
+    choices. Pass scheduled=False for that case.
+
+    The unscheduled form: each neighbour transmitting in a slot picks a subband at
+    random, and a collision is at least one of them landing on the same one.
     """
-    if neighbours <= 0 or active_ues <= 0:
+    if scheduled or neighbours <= 0 or active_ues <= 0:
         return 0.0
-    # a neighbour transmits in a given slot with a probability set by the offered load
     load_per_node = min(active_ues * ARRIVAL_RATE_HZ / 1000.0 * TTI_MS, 1.0)
     expected_transmitters = neighbours * load_per_node
     return 1.0 - (1.0 - 1.0 / SUBBAND_COUNT) ** expected_transmitters
@@ -122,8 +125,11 @@ def queueing_delay_ms(active_ues: int, service_time_ms: float,
 class Network:
     """The measured topology, and the cost of paths through it."""
 
-    def __init__(self, links: list[Link], donor: int = 0):
+    def __init__(self, links: list[Link], donor: int = 0, scheduled: bool = True):
         self.donor = donor
+        # scheduled: the donor coordinates subbands, so pc = 0 (Section III-C). The
+        # learned policy of Section IV decides locally and does not get that guarantee.
+        self.scheduled = scheduled
         self.links = {(link.src, link.dst): link for link in links}
         self.links.update({(link.dst, link.src): link for link in links})
         self.graph = nx.Graph()
@@ -131,7 +137,8 @@ class Network:
             self.graph.add_edge(link.src, link.dst, bler=link.bler, sinr_db=link.sinr_db)
 
     @classmethod
-    def from_csv(cls, path: str | Path, donor: int = 0) -> Network:
+    def from_csv(cls, path: str | Path, donor: int = 0,
+                 scheduled: bool = True) -> Network:
         links = []
         with open(path) as f:
             rows = [row for row in csv.reader(f) if not row[0].startswith("#")]
@@ -147,7 +154,7 @@ class Network:
                 sinr_db=float(record["sinr_db"]),
                 bler=float(record["bler"]),
             ))
-        return cls(links, donor)
+        return cls(links, donor, scheduled)
 
     def link(self, u: int, v: int) -> Link:
         return self.links[(u, v)]
@@ -175,7 +182,8 @@ class Network:
         product = 1.0
         for u, v in pairwise(path):
             link = self.link(u, v)
-            pc = collision_probability(active_ues, self.graph.degree(u))
+            pc = collision_probability(active_ues, self.graph.degree(u),
+                                       scheduled=self.scheduled)
             product *= link.success_probability * (1.0 - pc)
         return product
 

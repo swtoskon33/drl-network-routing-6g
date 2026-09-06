@@ -85,11 +85,23 @@ def test_more_hops_cost_more_delay_and_less_reliability():
 
 
 @pytest.mark.unit
-def test_collision_probability_rises_with_contention():
-    """Both with the neighbours in range and with the traffic they carry."""
-    assert collision_probability(40, 8) > collision_probability(40, 2)
-    assert collision_probability(100, 6) > collision_probability(20, 6)
-    assert collision_probability(40, 0) == 0.0
+def test_scheduled_transmission_does_not_collide():
+    """Section III-C: with the donor coordinating subbands, pc is zero. That is what
+    makes Problem 1 an exact shortest path."""
+    assert collision_probability(40, 6) == 0.0
+    assert collision_probability(1000, 8) == 0.0
+
+
+@pytest.mark.unit
+def test_unscheduled_collision_rises_with_contention():
+    """Under the DRL framework each node decides locally and nothing coordinates the
+    subband choices, so collisions appear -- with the neighbours in range and with the
+    traffic they carry."""
+    assert collision_probability(40, 8, scheduled=False) > \
+        collision_probability(40, 2, scheduled=False)
+    assert collision_probability(100, 6, scheduled=False) > \
+        collision_probability(20, 6, scheduled=False)
+    assert collision_probability(40, 0, scheduled=False) == 0.0
 
 
 @pytest.mark.unit
@@ -97,7 +109,8 @@ def test_a_single_transmitter_collides_at_the_subband_rate():
     """One neighbour, always transmitting: the chance it picks the same subband."""
     load = min(1000 * ARRIVAL_RATE_HZ / 1000.0 * TTI_MS, 1.0)
     assert load == pytest.approx(1.0)
-    assert collision_probability(1000, 1) == pytest.approx(1.0 / SUBBAND_COUNT)
+    assert collision_probability(1000, 1, scheduled=False) == \
+        pytest.approx(1.0 / SUBBAND_COUNT)
 
 
 @pytest.mark.unit
