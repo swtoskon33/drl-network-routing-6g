@@ -1,249 +1,173 @@
-# drl-network-routing
+# drl-network-routing-6g
 
-Deep reinforcement learning for two decisions in a 5G millimetre-wave mesh, each from a
-published paper, each with the non-learned baseline it has to beat.
+Deep reinforcement learning for two decisions in a 5G millimetre-wave mesh, each
+reproduced from a published paper, each measured against the non-learned method it has
+to beat.
 
-**Routing** — where does a packet go? A Dijkstra optimum with the whole graph, a greedy
-baseline, and a Soft Actor-Critic agent choosing hop by hop from local information alone.
+**Routing** — where does a packet go? An exact solver with the whole graph, a greedy
+baseline, and a Soft Actor-Critic agent choosing hop by hop from what one node can see.
 After Yin, Roy and Cao, *Routing and Resource Allocation for IAB Multi-Hop Network in 5G
 Advanced*, IEEE Transactions on Communications 70(10), 2022
 ([DOI](https://doi.org/10.1109/TCOMM.2022.3200673),
 [open PDF](https://par.nsf.gov/servlets/purl/10359622)).
 
-**Scheduling** — which links transmit this slot, and at what power? Activating every link
-is worse than activating a well-chosen subset, because they interfere. A PPO agent
-against a combinatorial baseline, where the argument is as much about decision time as
-quality: a forward pass fits in the 10 ms slot and a search over power levels does not.
-After Gahtan, Cohen, Bronstein and Kedar, *Using Deep Reinforcement Learning for mmWave
-Real-Time Scheduling*, NoF 2023 ([DOI](https://doi.org/10.1109/NoF58724.2023.10302794)).
+**Scheduling** — which links transmit this slot, and at what power? Activating every
+link is worse than activating a chosen subset, because they interfere. A PPO agent
+against a combinatorial baseline, where the argument is about decision time as much as
+quality. After Gahtan, Cohen, Bronstein and Kedar, *Using Deep Reinforcement Learning for
+mmWave Real-Time Scheduling*, NoF 2023
+([DOI](https://doi.org/10.1109/NoF58724.2023.10302794)).
 
-The topology and link conditions come from an ns-3 scenario in C++.
+## Results
 
-## The problems
+15 UEs on the measured deployment, 40 active UEs setting the contention:
 
-**Routing under a reliability constraint.** An IAB network extends coverage by relaying
-user traffic through wireless backhaul nodes to a donor with a fibre connection. Every
-extra hop costs latency and reliability, and mmWave links fail suddenly when something
-blocks them. Problem 1 of the first paper asks for the minimum-latency path subject to a
-reliability floor:
-minimise  T_delay(q)     subject to  P(q) >= sigma
+| Policy | Information | Reliability | Delay | Hops |
+|--------|-------------|-------------|-------|------|
+| Dijkstra, Eq. (5) and Algorithm 1 | whole graph | 0.646 | 1.53 ms | 2.80 |
+| Greedy, the SPS extension | one hop ahead | 0.658 | 1.56 ms | 2.73 |
+| SAC, Eq. (8) and (11) | neighbours only | **0.790** | 1.64 ms | 2.73 |
 
-with a 5 ms budget and 0.999 success probability, the 3GPP targets for VR/AR traffic.
-With global knowledge this is Dijkstra on a Lagrangian weight; the interesting version is
-solving it from local information only.
+The learned policy is 22% more reliable than the exact solver while seeing far less of
+the network, which is what Fig. 5(b) of the paper reports. Dijkstra minimises a cost
+built from collision probabilities computed in advance; the agent is paid on the
+acknowledgements it receives, so it learns which neighbours actually cost it
+retransmissions.
 
-**Scheduling under interference.** Links that transmit at the same time degrade each
-other, so the scheduler picks a subset and a power for each. The objective is the number
-of dropped packets rather than latency: minimising delivery time invites dropping packets
-to flatter the average. The hard constraint is time — the decision has to be made inside
-one slot, which rules out searching the combinatorial space directly.
+Scheduling, over the three mesh sizes:
 
-## Implementation
+| Mesh | Links | RPMA goodput | AARL goodput | RPMA decision | AARL decision |
+|------|-------|--------------|--------------|---------------|---------------|
+| small | 10 | 1.000 | 1.000 | 0.85 ms | 0.11 ms |
+| medium | 48 | 0.950 | 0.873 | 4.90 ms | 0.50 ms |
+| large | 96 | 0.777 | 0.318 | 13.77 ms | 7.98 ms |
 
-| Paper | Here |
-|-------|------|
-| Eq. (1), (2): latency model | `queueing_delay_ms`, `transmission_time_ms`, `total_delay_ms` |
-| Eq. (3): reliability | product of per-link success probabilities, pc = 0 |
-| Eq. (5): Lagrangian relaxation | link weight `Tproc/2 + Ttrans + mu*log(1/ps)` |
-| Algorithm 1: bisection on mu | `_bisect_mu`, and the same in the Dijkstra baseline |
-| Eq. (8): agent state | per-neighbour channel quality plus downstream latency and reliability |
-| Eq. (11): reward | `psi_d * ((tau - T)/T^o + (-1)^o) - psi_r * (K - 1)` |
-| Section IV: SAC on local information | `sac_routing.py`, discrete SAC with masked actions |
-| Section IV: pre-configured routing | the agent warm-starts on the Dijkstra route |
-| Table I: ns-3 parameters | 23 dBm, 100 MHz, 28 GHz, numerology 3, UMi |
-| Table II: SAC hyperparameters | critic (256, 1024, 1024, 256), actor (128, 512, 512, 128), batch 1024, lr 1e-3 |
-| Section IV-C: federated learning | not implemented |
+The decision time reproduces that paper's central claim: the search crosses the 10 ms
+slot budget on the largest mesh, so its schedules arrive after the slot they were
+computed for, while a forward pass does not care how many links it is scoring. On the
+incast workload, where 90% of nodes send to 10%, the learned policy reaches 0.773
+against the baseline's 0.460.
 
-## Architecture
+Details in docs/routing_results.md and docs/scheduling_benchmark.md.
 
-### Routing: ns-3 to a hop decision
+## Routing
 
-```
-      ns-3 scenario (C++)
-              |
-   28 GHz link budget: UMi pathloss, 23 dBm,
-   22 dB beam gain, 20% of links blocked
-              |
-              v
-   topology.csv (links, delay, BLER) + flows.csv
-              |
-      +-------+--------+--------------+
-      |                |              |
-      v                v              v
-   Dijkstra          greedy       SAC agent
-   whole graph      neighbours    neighbours
-   bisected mu*     lowest BLER   learned policy
-      |                |              |
-      +-------+--------+--------------+
-              |
-              v
-   per-UE delay, reliability, hops
-              |
-              v
-   docs/routing_comparison.md
-```
+Four phases, each verified before the next was started.
 
-### The SAC agent, one hop at a time
+**The deployment, measured.** An ns-3 scenario builds Fig. 4: a donor at the centre,
+three hexagonal rings of six IAB nodes at 200 m, UEs dropped uniformly by area and
+associated with their closest node. Every link goes through the real 3GPP TR 38.901
+Urban Micro model -- the condition model decides LOS or NLOS, the loss model applies the
+matching pathloss and shadowing, and 8x8 arrays at the nodes with 4x4 at the UEs supply
+the 36 dB of beamforming gain without which nothing closes at 28 GHz over 200 m. Table I
+parameters throughout. Written once with seed 42.
 
-```
-   node's neighbours
-          |
-   for each: link delay, BLER,
-   and the delay and reliability of
-   reaching the donor through it        <- Eq. (8)
-          |
-          v
-   actor (128, 512, 512, 128)           <- Table II
-          |
-   mask out padding slots and the
-   node we just came from
-          |
-          v
-   next hop
-          |
-   reward: psi_d*((tau-T)/T^o + (-1)^o)
-           - psi_r*(K-1)                <- Eq. (11)
-          |
-          v
-   twin critics (256, 1024, 1024, 256) + entropy term
-```
+**What a path costs.** Eq. (1) to (3). The transport block follows from each link's
+SINR, so a clean link carries a packet in fewer slots than a marginal one. Eq. (2)
+charges the queue, half the processing time per relay, and the transmission time of
+every hop. Eq. (3) multiplies the per-hop success probability by one minus the collision
+probability.
 
-### Training: warm start, then hand over
+**The exact answer.** Eq. (5) folds the reliability constraint into the objective with a
+multiplier, making Problem 1 a shortest path under
+`c(i, mu) = Tproc/2 + Ttrans(i) + mu*log(1/ps(i))`. Algorithm 1 bisects mu to where the
+path meets sigma. Greedy is the semi-persistent scheduling baseline: best channel that
+makes progress, one hop of foresight.
 
-```
-   donor solves Problem 1 centrally
-   (Dijkstra on c(i,mu), mu bisected to meet sigma)
-                   |
-                   v
-   routing table configured at every node       <- Section IV
-                   |
-      +------------+------------+
-      |                         |
-   early episodes            later episodes
-   follow the table          follow the policy
-      |                         |
-      +------------+------------+
-                   |
-        transitions into the replay buffer
-                   |
-                   v
-        SAC update: twin critics, entropy
-        target from real neighbour counts
-```
+**The agent.** Discrete SAC over the state of Eq. (8) and the reward of Eq. (11), with
+the networks and hyperparameters of Table II. Each node sees its neighbours and what the
+route through each of them costs, and nothing else. It warm-starts on the route the
+donor configured, as Section IV describes, and takes over as training proceeds.
 
-### Scheduling: which links transmit this slot
+## Reliability
 
-```
-   traffic matrix + interference matrix
-                   |
-                   v
-   buffers per link, packets on shortest paths
-                   |
-                   v
-   agent assigns a power to every link
-                   |
-   effective capacity = nominal x (power - interference)
-                   |
-                   v
-   packets move one hop; a packet arriving at
-   a full buffer is dropped
-                   |
-                   v
-   reward: -beta - alpha*(dropped/P) + (moved/P)
-```
+The paper reports above 0.999 and we reach 0.79. The gap is one quantity: the collision
+probability, which Eq. (3) pairs with the block error rate but the paper never
+parameterises. It depends on how many subbands the scheduler has, and reliability tracks
+that number directly:
 
+| Subbands | pc at degree 6 | Mean route reliability |
+|----------|----------------|------------------------|
+| 12 | 0.083 | 0.613 |
+| 24 | 0.042 | 0.786 |
+| 48 | 0.021 | 0.887 |
+| 96 | 0.010 | 0.942 |
+| 192 | 0.005 | 0.971 |
+
+Reaching 0.999 needs collisions to be almost absent, which a scheduler that avoids them
+by design achieves and one drawing subbands at random does not. We use 12, plausible for
+100 MHz at numerology 3, and report the sensitivity rather than tuning to the target.
+
+Latency does match, at 1.5 to 1.6 ms per packet on routes of the same length.
+
+Not implemented: UE mobility and the time-varying channel, the A2C baseline, and the
+federated learning of Section IV-C.
 
 ## Running it
 
-### The ns-3 scenario
+Build the topology once:
 
 ```
 cd ns3/ns-allinone-3.46.1/ns-3.46.1
-cp ../../../ns3-scenario/iab_routing_scenario.cc scratch/
+./ns3 configure --enable-modules=core,network,mobility,propagation,spectrum,antenna
+cp ../../../ns3-scenario/iab_topology.cc scratch/
 ./ns3 build
-./ns3 run "iab_routing_scenario \\
-    --topoOut=../../../ns3-scenario/traces/topology.csv \\
-    --flowOut=../../../ns3-scenario/traces/flows.csv"
+./ns3 run "iab_topology --seed=42 --run=1 \\
+    --positionsOut=../../../data/phase1/positions.csv \\
+    --linksOut=../../../data/phase1/links.csv"
 ```
 
-### Routing
+Then the policies:
 
 ```
-python src/drl_routing/baselines/dijkstra_iab.py ns3-scenario/traces/topology.csv \\
-    --out ns3-scenario/traces/dijkstra_vs_greedy.csv
-python src/drl_routing/agents/sac_routing.py ns3-scenario/traces/topology.csv \\
-    --episodes 6000 --out ns3-scenario/traces/sac_results.csv
-python scripts/compare_routing.py
-```
-
-Training picks up CUDA or Apple MPS when present. The Table II networks are large enough
-that a CPU run takes the better part of an hour; on MPS it is a few minutes.
-
-### Scheduling
-
-```
-# RPMA against the learned policy on all three meshes, plus the interference,
-# workload and drop-sensitivity sweeps
+python scripts/run_routing.py --episodes 6000
 python scripts/benchmark_scheduling.py --sizes small,medium,large --steps 150000
 ```
 
-### Hyperparameter search
+Training picks up CUDA or Apple MPS when present; the Table II networks are slow enough
+on CPU to matter.
 
-The papers fix their hyperparameters. This searches them first, over learning rate,
-rollout length, batch size, discount, entropy coefficient and network width, with ASHA
-stopping the trials that fall behind rather than running every one to the end:
+Both papers fix their hyperparameters. To search them first, with ASHA stopping the
+trials that fall behind:
 
 ```
 pip install -e ".[tuning]"
-python scripts/tune_scheduler.py --samples 40 --size small
+python scripts/tune_scheduler.py --samples 40
 ```
 
-### Tracking
-
-Every benchmark run logs its configuration and results to MLflow, so a number in this
-README traces back to the run that produced it:
-
-```
-pip install -e ".[tracking]"
-mlflow ui        # runs land under the 'scheduling' experiment
-```
-
-### CI
-
-`.github/workflows/ci.yml` runs lint and tests on every push, then a short benchmark:
-2000 training steps, enough to catch a change that breaks training or the baseline and
-not enough to reproduce the published numbers. Those come from a full run, and the
-report is uploaded as a build artifact either way.
+Benchmark runs log their configuration and results to MLflow, so a number here traces
+back to the run that produced it. CI lints and tests on every push, then runs a short
+benchmark: enough to catch a change that breaks training, not enough to reproduce the
+published numbers.
 
 ## Layout
 
 ```
-ns3-scenario/
-  iab_routing_scenario.cc    topology, mmWave link budget, traffic, CSV export
-  traces/                    topology.csv, flows.csv, results
+ns3-scenario/iab_topology.cc     the deployment and the 3GPP channel model
 
 src/drl_routing/
-  baselines/dijkstra_iab.py  Problem 1 via Eq. (5) and Algorithm 1, plus greedy
-  agents/sac_routing.py      discrete SAC: environment, networks, training, evaluation
-  topology/network.py        graph model with load-dependent delay
+  routing/cost.py                Eq. (1) to (3): latency and reliability
+  routing/baselines.py           Eq. (5) to (7) and Algorithm 1, plus greedy
+  routing/environment.py         the MDP: state Eq. (8), reward Eq. (11)
+  routing/sac.py                 discrete SAC, Table II
+  scheduling/mesh.py             topology, capacities, interference
+  scheduling/env.py              buffers, packet movement, drops
+  scheduling/aarl.py             PPO agent and its gym wrapper
+  scheduling/rpma.py             the combinatorial baseline
+  tracking.py                    MLflow logging
 
-  scheduling/mesh.py         topology, capacities, interference matrix
-  scheduling/env.py          buffers, packet movement, drops, reward
-  scheduling/aarl.py         PPO agent and its gym wrapper
-  scheduling/rpma.py         the combinatorial baseline
-  tracking.py                MLflow logging
-
-scripts/compare_routing.py       scores every routing policy on the same UEs
+scripts/run_routing.py           every routing policy on the same topology
 scripts/benchmark_scheduling.py  RPMA against the learned scheduler
 scripts/tune_scheduler.py        Ray Tune sweep
-docs/routing_comparison.md       routing results
+
+docs/routing_results.md          routing comparison and the subband sensitivity
 docs/scheduling_benchmark.md     scheduling results and sweeps
 ```
 
 ## Stack
 
-ns-3.46.1 (C++), Python 3.11, PyTorch, Stable-Baselines3, Gymnasium, NetworkX,
-Ray Tune, MLflow, GitHub Actions.
+ns-3.46.1 (C++), Python 3.11, PyTorch, Stable-Baselines3, Gymnasium, NetworkX, Ray Tune,
+MLflow, GitHub Actions.
 
 ## Licence
 

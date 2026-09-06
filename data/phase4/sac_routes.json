@@ -1,0 +1,208 @@
+[
+  {
+    "ue": 42,
+    "algorithm": "sac",
+    "path": [
+      42,
+      2,
+      0
+    ],
+    "hops": 2,
+    "reached": true,
+    "delay_ms": 1.0125,
+    "reliability": 0.8525351338773592
+  },
+  {
+    "ue": 22,
+    "algorithm": "sac",
+    "path": [
+      22,
+      8,
+      7,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.8875,
+    "reliability": 0.7373266589670623
+  },
+  {
+    "ue": 49,
+    "algorithm": "sac",
+    "path": [
+      49,
+      8,
+      7,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.8875,
+    "reliability": 0.7373266589670623
+  },
+  {
+    "ue": 50,
+    "algorithm": "sac",
+    "path": [
+      50,
+      8,
+      7,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.8875,
+    "reliability": 0.7373266589670623
+  },
+  {
+    "ue": 37,
+    "algorithm": "sac",
+    "path": [
+      37,
+      9,
+      0
+    ],
+    "hops": 2,
+    "reached": true,
+    "delay_ms": 1.2625,
+    "reliability": 0.8524740492946781
+  },
+  {
+    "ue": 52,
+    "algorithm": "sac",
+    "path": [
+      52,
+      9,
+      0
+    ],
+    "hops": 2,
+    "reached": true,
+    "delay_ms": 1.2625,
+    "reliability": 0.8524740492946781
+  },
+  {
+    "ue": 24,
+    "algorithm": "sac",
+    "path": [
+      24,
+      10,
+      0
+    ],
+    "hops": 2,
+    "reached": true,
+    "delay_ms": 1.1375,
+    "reliability": 0.8649733886589871
+  },
+  {
+    "ue": 28,
+    "algorithm": "sac",
+    "path": [
+      28,
+      10,
+      0
+    ],
+    "hops": 2,
+    "reached": true,
+    "delay_ms": 1.3125,
+    "reliability": 0.8649731837447421
+  },
+  {
+    "ue": 33,
+    "algorithm": "sac",
+    "path": [
+      33,
+      11,
+      6,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.7625,
+    "reliability": 0.7163161506088853
+  },
+  {
+    "ue": 40,
+    "algorithm": "sac",
+    "path": [
+      40,
+      11,
+      6,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.7625,
+    "reliability": 0.7163161506088853
+  },
+  {
+    "ue": 34,
+    "algorithm": "sac",
+    "path": [
+      34,
+      12,
+      6,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.5125,
+    "reliability": 0.7482127446625221
+  },
+  {
+    "ue": 51,
+    "algorithm": "sac",
+    "path": [
+      51,
+      13,
+      7,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 2.0625,
+    "reliability": 0.8649038195606472
+  },
+  {
+    "ue": 35,
+    "algorithm": "sac",
+    "path": [
+      35,
+      14,
+      9,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 2.1875,
+    "reliability": 0.7812707033424301
+  },
+  {
+    "ue": 41,
+    "algorithm": "sac",
+    "path": [
+      41,
+      16,
+      10,
+      0
+    ],
+    "hops": 3,
+    "reached": true,
+    "delay_ms": 1.5125,
+    "reliability": 0.8281406883002751
+  },
+  {
+    "ue": 32,
+    "algorithm": "sac",
+    "path": [
+      32,
+      17,
+      12,
+      1,
+      0
+    ],
+    "hops": 4,
+    "reached": true,
+    "delay_ms": 2.1375,
+    "reliability": 0.6958443720162242
+  }
+]

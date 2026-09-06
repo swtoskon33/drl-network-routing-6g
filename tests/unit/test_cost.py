@@ -11,6 +11,7 @@ import pytest
 from drl_routing.routing.cost import (
     ARRIVAL_RATE_HZ,
     LATENCY_BUDGET_MS,
+    PACKET_BYTES,
     SUBBAND_COUNT,
     T_PROC_MS,
     TTI_MS,
@@ -40,7 +41,7 @@ def test_transmission_time_is_slots_rounded_up():
     """Eq. (1): Ttrans = ceil(pkt / TB) x TTI."""
     link = _link(0, 1)
     tb = transport_block_bytes(link)
-    expected = math.ceil(100_000 / tb) * TTI_MS
+    expected = math.ceil(PACKET_BYTES / tb) * TTI_MS
     assert transmission_time_ms(link) == pytest.approx(expected)
 
 

@@ -23,7 +23,13 @@ TTI_MS = 1.0 / (2 ** NUMEROLOGY)      # slot length at numerology u is 1/2^u ms
 T_PROC_MS = 4 * TTI_MS                # Tproc = 4 x TTI, Section III-A
 
 BANDWIDTH_HZ = 100e6
-PACKET_BYTES = 0.1e6                  # FTP model 3: 0.1 Mbyte packets
+FILE_BYTES = 0.1e6                    # FTP model 3: the file the UE transfers
+# The latency the paper reports is per packet, not per file. A 0.1 Mbyte file over a
+# 100 MHz carrier takes twelve slots on a good link and two hundred on a marginal one; a
+# three-hop route would spend more than the whole 5 ms budget on transmission alone. The
+# file is segmented at the MAC layer and the routing decision is made for a packet, which
+# is what Eq. (1) sizes with ceil(pkt/TB).
+PACKET_BYTES = 8000.0                 # one MAC packet
 ARRIVAL_RATE_HZ = 100.0 / 3.0         # Poisson, mean 100/3 per second per UE
 DL_UL_RATIO = 4.0                     # Section V
 
@@ -33,6 +39,12 @@ RELIABILITY_TARGET = 0.999            # sigma
 # Subbands available for the TDMA scheduler to assign. Two nodes close enough to
 # interfere and unlucky enough to pick the same one in the same slot collide.
 SUBBAND_COUNT = 12
+
+# The lowest modulation and coding scheme in TS 38.214 (QPSK, rate 0.12) needs about
+# -6 dB and carries roughly 0.23 bit per hertz. Below that threshold a link is not
+# slow, it is absent.
+MIN_USABLE_SINR_DB = -6.0
+MIN_SPECTRAL_EFFICIENCY = 0.23
 
 
 @dataclass(frozen=True)
@@ -53,14 +65,26 @@ class Link:
         return max(1.0 - self.bler, 1e-9)
 
     @property
-    def spectral_efficiency(self) -> float:
-        """Shannon capacity per hertz at this link's SINR, capped at 256QAM rate 0.93.
+    def usable(self) -> bool:
+        """Whether link adaptation can carry anything over this link at all.
 
-        The cap is what the highest MCS in TS 38.214 delivers; without it a 33 dB link
-        would be credited with a throughput no modulation scheme offers.
+        The lowest MCS in TS 38.214 needs about -6 dB. Below that the scheduler has
+        nothing to fall back on, and treating the link as merely slow rather than absent
+        produces transmission times of tens of milliseconds -- a route through a link the
+        BLER model has already written off as unusable.
+        """
+        return self.sinr_db >= MIN_USABLE_SINR_DB
+
+    @property
+    def spectral_efficiency(self) -> float:
+        """Shannon capacity per hertz at this link's SINR.
+
+        Capped at the rate the highest MCS delivers, since a 33 dB link cannot be
+        credited with throughput no modulation scheme offers, and floored at the lowest
+        MCS so a usable link always carries something.
         """
         sinr_linear = 10 ** (self.sinr_db / 10.0)
-        return min(math.log2(1.0 + sinr_linear), 7.4)
+        return min(max(math.log2(1.0 + sinr_linear), MIN_SPECTRAL_EFFICIENCY), 7.4)
 
 
 def transport_block_bytes(link: Link) -> float:
@@ -134,7 +158,9 @@ class Network:
         self.links.update({(link.dst, link.src): link for link in links})
         self.graph = nx.Graph()
         for link in links:
-            self.graph.add_edge(link.src, link.dst, bler=link.bler, sinr_db=link.sinr_db)
+            if link.usable:
+                self.graph.add_edge(link.src, link.dst,
+                                    bler=link.bler, sinr_db=link.sinr_db)
 
     @classmethod
     def from_csv(cls, path: str | Path, donor: int = 0,
